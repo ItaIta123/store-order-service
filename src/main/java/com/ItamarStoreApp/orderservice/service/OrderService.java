@@ -3,19 +3,20 @@ package com.ItamarStoreApp.orderservice.service;
 import com.ItamarStoreApp.orderservice.dto.InventoryResponse;
 import com.ItamarStoreApp.orderservice.dto.OrderLineItemsDto;
 import com.ItamarStoreApp.orderservice.dto.OrderRequest;
+import com.ItamarStoreApp.orderservice.event.OrderPlacedEvent;
 import com.ItamarStoreApp.orderservice.model.Order;
 import com.ItamarStoreApp.orderservice.model.OrderLineItems;
 import com.ItamarStoreApp.orderservice.repository.OrderRepository;
 import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
+
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 
-import java.beans.ConstructorProperties;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -24,13 +25,14 @@ public class OrderService {
 
     private final OrderRepository orderRepository;
     private final WebClient.Builder webClientBuilder;
-    public String placeOrder(OrderRequest orderRequest){
+    private final KafkaTemplate<String, OrderPlacedEvent> kafkaTemplate;
+
+    public String placeOrder(OrderRequest orderRequest) {
         Order order = new Order();
         order.setOrderNumber(UUID.randomUUID().toString());
 
-        List<OrderLineItems> orderLineItemsList = orderRequest.getOrderLineItemsListDtoList().
-                stream().
-                map(this::mapToOrderLineItems)
+        List<OrderLineItems> orderLineItemsList = orderRequest.getOrderLineItemsListDtoList().stream()
+                .map(this::mapToOrderLineItems)
                 .toList();
 
         order.setOrderLineItemsList(orderLineItemsList);
@@ -45,7 +47,6 @@ public class OrderService {
                 .bodyToMono(InventoryResponse[].class)
                 .block();
 
-
         boolean allProductsInStock = false;
         if (inventoryResponseArray != null) {
             allProductsInStock = Arrays.stream(inventoryResponseArray).allMatch(InventoryResponse::isInStock);
@@ -56,6 +57,8 @@ public class OrderService {
         }
 
         orderRepository.save(order);
+        kafkaTemplate.send("notificationTopic",
+                new OrderPlacedEvent(order.getOrderNumber()));
         return "Order placed successfully";
 
     }
